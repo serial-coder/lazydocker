@@ -21,7 +21,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// DockerCommand is our main git interface
+const (
+	APIVersion = "1.25"
+)
+
+// DockerCommand is our main docker interface
 type DockerCommand struct {
 	Log                    *logrus.Entry
 	OSCommand              *OSCommand
@@ -29,6 +33,7 @@ type DockerCommand struct {
 	Config                 *config.AppConfig
 	Client                 *client.Client
 	InDockerComposeProject bool
+	ShowExited             bool
 	ErrorChan              chan error
 	ContainerMutex         sync.Mutex
 	ServiceMutex           sync.Mutex
@@ -50,6 +55,8 @@ type CommandObject struct {
 	DockerCompose string
 	Service       *Service
 	Container     *Container
+	Image         *Image
+	Volume        *Volume
 }
 
 // NewCommandObject takes a command object and returns a default command object with the passed command object merged in
@@ -59,9 +66,9 @@ func (c *DockerCommand) NewCommandObject(obj CommandObject) CommandObject {
 	return defaultObj
 }
 
-// NewDockerCommand it runs git commands
+// NewDockerCommand it runs docker commands
 func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.TranslationSet, config *config.AppConfig, errorChan chan error) (*DockerCommand, error) {
-	cli, err := client.NewEnvClient()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithVersion(APIVersion))
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +80,7 @@ func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.Translat
 		Config:                 config,
 		Client:                 cli,
 		ErrorChan:              errorChan,
+		ShowExited:             true,
 		InDockerComposeProject: true,
 	}
 
@@ -99,6 +107,7 @@ func NewDockerCommand(log *logrus.Entry, osCommand *OSCommand, tr *i18n.Translat
 
 // MonitorContainerStats is a function
 func (c *DockerCommand) MonitorContainerStats() {
+	// TODO: pass in a stop channel to these so we don't restart every time we come back from a subprocess
 	go c.MonitorCLIContainerStats()
 	go c.MonitorClientContainerStats()
 }
@@ -136,15 +145,15 @@ func (c *DockerCommand) MonitorCLIContainerStats() {
 	}
 
 	cmd.Wait()
-
-	return
 }
 
 // MonitorClientContainerStats is a function
 func (c *DockerCommand) MonitorClientContainerStats() {
 	// periodically loop through running containers and see if we need to create a monitor goroutine for any
 	// every second we check if we need to spawn a new goroutine
-	for range time.Tick(time.Second) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
 		for _, container := range c.Containers {
 			if !container.MonitoringStats {
 				go c.createClientStatMonitor(container)
@@ -185,7 +194,6 @@ func (c *DockerCommand) createClientStatMonitor(container *Container) {
 	}
 
 	container.MonitoringStats = false
-	return
 }
 
 // RefreshContainersAndServices returns a slice of docker containers
@@ -213,10 +221,8 @@ func (c *DockerCommand) RefreshContainersAndServices() error {
 
 	c.assignContainersToServices(containers, services)
 
-	var displayContainers []*Container
-	if c.Config.UserConfig.Gui.ShowAllContainers {
-		displayContainers = containers
-	} else {
+	var displayContainers = containers
+	if !c.Config.UserConfig.Gui.ShowAllContainers {
 		displayContainers = c.obtainStandaloneContainers(containers, services)
 	}
 
@@ -235,7 +241,7 @@ func (c *DockerCommand) RefreshContainersAndServices() error {
 
 	c.Containers = containers
 	c.Services = services
-	c.DisplayContainers = displayContainers
+	c.DisplayContainers = c.filterOutExited(displayContainers)
 
 	return nil
 }
@@ -251,6 +257,20 @@ L:
 		}
 		service.Container = nil
 	}
+}
+
+// filterOutExited filters out the exited containers if c.ShowExited is false
+func (c *DockerCommand) filterOutExited(containers []*Container) []*Container {
+	if c.ShowExited {
+		return containers
+	}
+	toReturn := []*Container{}
+	for _, container := range containers {
+		if container.Container.State != "exited" {
+			toReturn = append(toReturn, container)
+		}
+	}
+	return toReturn
 }
 
 // obtainStandaloneContainers returns standalone containers. Standalone containers are containers which are either one-off containers, or whose service is not part of this docker-compose context

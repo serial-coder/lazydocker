@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
+	"github.com/integrii/flaggy"
 	"github.com/jesseduffield/lazydocker/pkg/app"
 	"github.com/jesseduffield/lazydocker/pkg/config"
 	"github.com/jesseduffield/yaml"
@@ -21,40 +21,65 @@ var (
 	date        string
 	buildSource = "unknown"
 
-	configFlag    = flag.Bool("config", false, "Print the current default config")
-	debuggingFlag = flag.Bool("debug", false, "a boolean")
-	versionFlag   = flag.Bool("v", false, "Print the current version")
+	configFlag    = false
+	debuggingFlag = false
+	composeFiles  []string
 )
 
 func main() {
-	flag.Parse()
-	if *versionFlag {
-		fmt.Printf("commit=%s, build date=%s, build source=%s, version=%s, os=%s, arch=%s\n", commit, date, buildSource, version, runtime.GOOS, runtime.GOARCH)
-		os.Exit(0)
-	}
+	info := fmt.Sprintf(
+		"%s\nDate: %s\nBuildSource: %s\nCommit: %s\nOS: %s\nArch: %s",
+		version,
+		date,
+		buildSource,
+		commit,
+		runtime.GOOS,
+		runtime.GOARCH,
+	)
 
-	if *configFlag {
+	flaggy.SetName("lazydocker")
+	flaggy.SetDescription("The lazier way to manage everything docker")
+	flaggy.DefaultParser.AdditionalHelpPrepend = "https://github.com/jesseduffield/lazydocker"
+
+	flaggy.Bool(&configFlag, "c", "config", "Print the current default config")
+	flaggy.Bool(&debuggingFlag, "d", "debug", "a boolean")
+	flaggy.StringSlice(&composeFiles, "f", "file", "Specify alternate compose files")
+	flaggy.SetVersion(info)
+
+	flaggy.Parse()
+
+	if configFlag {
 		var buf bytes.Buffer
-		yaml.NewEncoder(&buf).Encode(config.GetDefaultConfig())
+		encoder := yaml.NewEncoder(&buf)
+		err := encoder.Encode(config.GetDefaultConfig())
+		if err != nil {
+			log.Fatal(err.Error())
+		}
 		fmt.Printf("%v\n", buf.String())
 		os.Exit(0)
 	}
 
-	// for now we're always in debug mode so we're not passing *debuggingFlag
-	*debuggingFlag = true
+	projectDir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 
-	appConfig, err := config.NewAppConfig("lazydocker", version, commit, date, buildSource, *debuggingFlag)
+	appConfig, err := config.NewAppConfig("lazydocker", version, commit, date, buildSource, debuggingFlag, composeFiles, projectDir)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 
 	app, err := app.NewApp(appConfig)
-
 	if err == nil {
 		err = app.Run()
 	}
 
 	if err != nil {
+		if errMessage, known := app.KnownError(err); known {
+			log.Println(errMessage)
+			os.Exit(0)
+		}
+
 		if client.IsErrConnectionFailed(err) {
 			log.Println(app.Tr.ConnectionFailed)
 			os.Exit(0)

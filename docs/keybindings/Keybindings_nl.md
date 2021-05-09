@@ -1,69 +1,74 @@
 # Lazydocker menu
 
-## Status
+## Project
 
 <pre>
-  <kbd>e</kbd>: edit lazydocker config
-  <kbd>o</kbd>: open lazydocker config
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>￨</kbd>: next tab
-  <kbd>m</kbd>: view logs
-  <kbd>enter</kbd>: focus main panel
+  <kbd>e</kbd>: verander de lazydocker configuratie
+  <kbd>o</kbd>: open de lazydocker configuratie
+  <kbd>[</kbd>: vorige tab
+  <kbd>]</kbd>: volgende tab
+  <kbd>m</kbd>: bekijk logs
+  <kbd>enter</kbd>: focus hoofdpaneel
 </pre>
 
 ## Containers
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove
+  <kbd>[</kbd>: vorige tab
+  <kbd>]</kbd>: volgende tab
+  <kbd>d</kbd>: verwijder
+  <kbd>e</kbd>: Verberg gestopte containers
   <kbd>s</kbd>: stop
-  <kbd>r</kbd>: restart
-  <kbd>a</kbd>: attach
-  <kbd>D</kbd>: prune exited containers
-  <kbd>m</kbd>: view logs
-  <kbd>c</kbd>: run predefined custom command
-  <kbd>enter</kbd>: focus main panel
+  <kbd>r</kbd>: herstart
+  <kbd>a</kbd>: verbinden
+  <kbd>m</kbd>: bekijk logs
+  <kbd>E</kbd>: exec shell
+  <kbd>c</kbd>: draai een vooraf bedacht aangepaste opdracht
+  <kbd>b</kbd>: view bulk commands
+  <kbd>w</kbd>: open in browser (first port is http)
+  <kbd>enter</kbd>: focus hoofdpaneel
 </pre>
 
-## Services
+## Diensten
 
 <pre>
-  <kbd>d</kbd>: remove containers
+  <kbd>d</kbd>: verwijder containers
   <kbd>s</kbd>: stop
-  <kbd>r</kbd>: restart
-  <kbd>a</kbd>: attach
-  <kbd>m</kbd>: view logs
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>R</kbd>: view restart options
-  <kbd>c</kbd>: run predefined custom command
-  <kbd>enter</kbd>: focus main panel
+  <kbd>r</kbd>: herstart
+  <kbd>a</kbd>: verbinden
+  <kbd>m</kbd>: bekijk logs
+  <kbd>[</kbd>: vorige tab
+  <kbd>]</kbd>: volgende tab
+  <kbd>R</kbd>: bekijk herstart opties
+  <kbd>c</kbd>: draai een vooraf bedacht aangepaste opdracht
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: focus hoofdpaneel
 </pre>
 
 ## Images
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove image
-  <kbd>D</kbd>: prune unused images
-  <kbd>enter</kbd>: focus main panel
+  <kbd>[</kbd>: vorige tab
+  <kbd>]</kbd>: volgende tab
+  <kbd>c</kbd>: draai een vooraf bedacht aangepaste opdracht
+  <kbd>d</kbd>: verwijder image
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: focus hoofdpaneel
 </pre>
 
 ## Volumes
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove volume
-  <kbd>D</kbd>: prune unused volumes
-  <kbd>enter</kbd>: focus main panel
+  <kbd>[</kbd>: vorige tab
+  <kbd>]</kbd>: volgende tab
+  <kbd>c</kbd>: draai een vooraf bedacht aangepaste opdracht
+  <kbd>d</kbd>: verwijder volume
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: focus hoofdpaneel
 </pre>
 
-## Main
+## Hoofd
 
 <pre>
-  <kbd>esc</kbd>: return
+  <kbd>esc</kbd>: terug
 </pre>

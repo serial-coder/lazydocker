@@ -17,6 +17,7 @@ import (
 	"github.com/jesseduffield/lazydocker/pkg/app"
 	"github.com/jesseduffield/lazydocker/pkg/config"
 	"github.com/jesseduffield/lazydocker/pkg/gui"
+	"github.com/jesseduffield/lazydocker/pkg/i18n"
 )
 
 type bindingSection struct {
@@ -25,16 +26,15 @@ type bindingSection struct {
 }
 
 func main() {
-	langs := []string{"pl", "nl", "en"}
-	mConfig, err := config.NewAppConfig("lazydocker", "", "", "", "", true)
+	mConfig, err := config.NewAppConfig("lazydocker", "", "", "", "", true, nil, "")
 	if err != nil {
 		panic(err)
 	}
 
-	for _, lang := range langs {
+	for lang := range i18n.GetTranslationSets() {
 		os.Setenv("LC_ALL", lang)
 		mApp, _ := app.NewApp(mConfig)
-		file, err := os.Create(getProjectRoot() + "/docs/keybindings/Keybindings_" + lang + ".md")
+		file, err := os.Create("./docs/keybindings/Keybindings_" + lang + ".md")
 		if err != nil {
 			panic(err)
 		}
@@ -76,7 +76,7 @@ func getBindingSections(mApp *app.App) []*bindingSection {
 		titleMap := map[string]string{
 			"global":     mApp.Tr.GlobalTitle,
 			"main":       mApp.Tr.MainTitle,
-			"status":     mApp.Tr.StatusTitle,
+			"project":    mApp.Tr.ProjectTitle,
 			"services":   mApp.Tr.ServicesTitle,
 			"containers": mApp.Tr.ContainersTitle,
 			"images":     mApp.Tr.ImagesTitle,

@@ -3,6 +3,8 @@ package commands
 import (
 	"os/exec"
 
+	"github.com/docker/docker/api/types/container"
+
 	"github.com/docker/docker/api/types"
 	"github.com/fatih/color"
 	"github.com/jesseduffield/lazydocker/pkg/utils"
@@ -23,11 +25,11 @@ type Service struct {
 func (s *Service) GetDisplayStrings(isFocused bool) []string {
 
 	if s.Container == nil {
-		return []string{utils.ColoredString("none", color.FgBlack), s.Name, ""}
+		return []string{utils.ColoredString("none", color.FgBlue), "", s.Name, ""}
 	}
 
 	cont := s.Container
-	return []string{cont.GetDisplayStatus(), s.Name, cont.GetDisplayCPUPerc()}
+	return []string{cont.GetDisplayStatus(), cont.GetDisplaySubstatus(), s.Name, cont.GetDisplayCPUPerc()}
 }
 
 // Remove removes the service's containers
@@ -61,7 +63,7 @@ func (s *Service) Attach() (*exec.Cmd, error) {
 }
 
 // Top returns process information
-func (s *Service) Top() (types.ContainerProcessList, error) {
+func (s *Service) Top() (container.ContainerTopOKBody, error) {
 	return s.Container.Top()
 }
 

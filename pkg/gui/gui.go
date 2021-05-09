@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"github.com/golang-collections/collections/stack"
 	"strings"
 	"sync"
 
@@ -81,7 +82,7 @@ type containerPanelState struct {
 	ContextIndex int // for specifying if you are looking at logs/stats/config/etc
 }
 
-type statusState struct {
+type projectState struct {
 	ContextIndex int // for specifying if you are looking at credits/logs
 }
 
@@ -112,12 +113,12 @@ type panelStates struct {
 	Main       *mainPanelState
 	Images     *imagePanelState
 	Volumes    *volumePanelState
-	Status     *statusState
+	Project    *projectState
 }
 
 type guiState struct {
 	MenuItemCount    int // can't store the actual list because it's of interface{} type
-	PreviousView     string
+	PreviousViews    *stack.Stack
 	Platform         commands.Platform
 	Panels           *panelStates
 	SubProcessOutput string
@@ -131,14 +132,8 @@ type guiState struct {
 
 // NewGui builds a new gui handler
 func NewGui(log *logrus.Entry, dockerCommand *commands.DockerCommand, oSCommand *commands.OSCommand, tr *i18n.TranslationSet, config *config.AppConfig, errorChan chan error) (*Gui, error) {
-	previousView := "containers"
-	if dockerCommand.InDockerComposeProject {
-		previousView = "services"
-	}
-
 	initialState := guiState{
-		PreviousView: previousView,
-		Platform:     *oSCommand.Platform,
+		Platform: *oSCommand.Platform,
 		Panels: &panelStates{
 			Services:   &servicePanelState{SelectedLine: -1, ContextIndex: 0},
 			Containers: &containerPanelState{SelectedLine: -1, ContextIndex: 0},
@@ -148,14 +143,15 @@ func NewGui(log *logrus.Entry, dockerCommand *commands.DockerCommand, oSCommand 
 			Main: &mainPanelState{
 				ObjectKey: "",
 			},
-			Status: &statusState{ContextIndex: 0},
+			Project: &projectState{ContextIndex: 0},
 		},
-		SessionIndex: 0,
+		SessionIndex:  0,
+		PreviousViews: stack.New(),
 	}
 
-	cyclableViews := []string{"status", "containers", "images", "volumes"}
+	cyclableViews := []string{"project", "containers", "images", "volumes"}
 	if dockerCommand.InDockerComposeProject {
-		cyclableViews = []string{"status", "services", "containers", "images", "volumes"}
+		cyclableViews = []string{"project", "services", "containers", "images", "volumes"}
 	}
 
 	gui := &Gui{
@@ -167,7 +163,7 @@ func NewGui(log *logrus.Entry, dockerCommand *commands.DockerCommand, oSCommand 
 		Config:        config,
 		Tr:            tr,
 		statusManager: &statusManager{},
-		T:             tasks.NewTaskManager(log),
+		T:             tasks.NewTaskManager(log, tr),
 		ErrorChan:     errorChan,
 		CyclableViews: cyclableViews,
 	}
@@ -175,10 +171,6 @@ func NewGui(log *logrus.Entry, dockerCommand *commands.DockerCommand, oSCommand 
 	gui.GenerateSentinelErrors()
 
 	return gui, nil
-}
-
-func (gui *Gui) handleRefresh(g *gocui.Gui, v *gocui.View) error {
-	return gui.refreshSidePanels(g)
 }
 
 func max(a, b int) int {
@@ -222,19 +214,12 @@ func (gui *Gui) promptAnonymousReporting() error {
 	})
 }
 
-func (gui *Gui) renderAppStatus() error {
-	appStatus := gui.statusManager.getStatusString()
-	if appStatus != "" {
-		return gui.renderString(gui.g, "appStatus", appStatus)
-	}
-	return nil
-}
-
 func (gui *Gui) renderGlobalOptions() error {
 	return gui.renderOptionsMap(map[string]string{
 		"PgUp/PgDn": gui.Tr.Scroll,
 		"← → ↑ ↓":   gui.Tr.Navigate,
 		"esc/q":     gui.Tr.Close,
+		"b":         gui.Tr.ViewBulkCommands,
 		"x":         gui.Tr.Menu,
 	})
 }
@@ -243,7 +228,9 @@ func (gui *Gui) goEvery(interval time.Duration, function func() error) {
 	currentSessionIndex := gui.State.SessionIndex
 	_ = function() // time.Tick doesn't run immediately so we'll do that here // TODO: maybe change
 	go func() {
-		for range time.Tick(interval) {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
 			if gui.State.SessionIndex > currentSessionIndex {
 				return
 			}
@@ -254,6 +241,9 @@ func (gui *Gui) goEvery(interval time.Duration, function func() error) {
 
 // Run setup the gui with keybindings and start the mainloop
 func (gui *Gui) Run() error {
+	// closing our task manager which in turn closes the current task if there is any, so we aren't leaving processes lying around after closing lazydocker
+	defer gui.T.Close()
+
 	g, err := gocui.NewGui(gocui.OutputNormal, OverlappingEdges)
 	if err != nil {
 		return err
@@ -277,20 +267,24 @@ func (gui *Gui) Run() error {
 		gui.waitForIntro.Add(1)
 	}
 
+	dockerRefreshInterval := gui.Config.UserConfig.Update.DockerRefreshInterval
 	go func() {
 		gui.waitForIntro.Wait()
-		gui.goEvery(time.Millisecond*50, gui.renderAppStatus)
 		gui.goEvery(time.Millisecond*30, gui.reRenderMain)
-		gui.goEvery(time.Millisecond*100, gui.refreshContainersAndServices)
-		gui.goEvery(time.Millisecond*100, gui.refreshVolumes)
+		gui.goEvery(dockerRefreshInterval, gui.refreshProject)
+		gui.goEvery(dockerRefreshInterval, gui.refreshContainersAndServices)
+		gui.goEvery(dockerRefreshInterval, gui.refreshVolumes)
 		gui.goEvery(time.Millisecond*1000, gui.DockerCommand.UpdateContainerDetails)
 		gui.goEvery(time.Millisecond*1000, gui.checkForContextChange)
 	}()
 
-	go gui.DockerCommand.MonitorContainerStats()
+	gui.DockerCommand.MonitorContainerStats()
 
 	go func() {
 		for err := range gui.ErrorChan {
+			if err == nil {
+				continue
+			}
 			if strings.Contains(err.Error(), "No such container") {
 				// this happens all the time when e.g. restarting containers so we won't worry about it
 				gui.Log.Warn(err)
@@ -393,4 +387,11 @@ func (gui *Gui) shouldRefresh(key string) bool {
 
 	gui.State.Panels.Main.ObjectKey = key
 	return true
+}
+
+func (gui *Gui) initiallyFocusedViewName() string {
+	if gui.DockerCommand.InDockerComposeProject {
+		return "services"
+	}
+	return "containers"
 }

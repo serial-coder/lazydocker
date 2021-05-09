@@ -79,12 +79,13 @@ func (gui *Gui) prepareConfirmationPanel(currentView *gocui.View, title, prompt 
 			return nil, err
 		}
 		confirmationView.HasLoader = hasLoader
+		gui.g.StartTicking()
 		confirmationView.Title = title
 		confirmationView.Wrap = true
 		confirmationView.FgColor = gocui.ColorWhite
 	}
 	gui.g.Update(func(g *gocui.Gui) error {
-		return gui.switchFocus(gui.g, currentView, confirmationView)
+		return gui.switchFocus(gui.g, currentView, confirmationView, false)
 	})
 	return confirmationView, nil
 }
@@ -96,10 +97,6 @@ func (gui *Gui) onNewPopupPanel() {
 	for _, viewName := range viewNames {
 		_, _ = gui.g.SetViewOnBottom(viewName)
 	}
-}
-
-func (gui *Gui) createLoaderPanel(g *gocui.Gui, currentView *gocui.View, prompt string) error {
-	return gui.createPopupPanel(g, currentView, "", prompt, true, nil, nil)
 }
 
 // it is very important that within this function we never include the original prompt in any error messages, because it may contain e.g. a user password
@@ -131,25 +128,21 @@ func (gui *Gui) createPopupPanel(g *gocui.Gui, currentView *gocui.View, title, p
 
 func (gui *Gui) setKeyBindings(g *gocui.Gui, handleConfirm, handleClose func(*gocui.Gui, *gocui.View) error) error {
 	// would use a loop here but because the function takes an interface{} and slices of interfaces require even more boilerplate
-	if err := g.SetKeybinding("confirmation", gocui.KeyEnter, gocui.ModNone, gui.wrappedConfirmationFunction(handleConfirm)); err != nil {
+	if err := g.SetKeybinding("confirmation", nil, gocui.KeyEnter, gocui.ModNone, gui.wrappedConfirmationFunction(handleConfirm)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("confirmation", 'y', gocui.ModNone, gui.wrappedConfirmationFunction(handleConfirm)); err != nil {
+	if err := g.SetKeybinding("confirmation", nil, 'y', gocui.ModNone, gui.wrappedConfirmationFunction(handleConfirm)); err != nil {
 		return err
 	}
 
-	if err := g.SetKeybinding("confirmation", gocui.KeyEsc, gocui.ModNone, gui.wrappedConfirmationFunction(handleClose)); err != nil {
+	if err := g.SetKeybinding("confirmation", nil, gocui.KeyEsc, gocui.ModNone, gui.wrappedConfirmationFunction(handleClose)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("confirmation", 'n', gocui.ModNone, gui.wrappedConfirmationFunction(handleClose)); err != nil {
+	if err := g.SetKeybinding("confirmation", nil, 'n', gocui.ModNone, gui.wrappedConfirmationFunction(handleClose)); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (gui *Gui) createMessagePanel(g *gocui.Gui, currentView *gocui.View, title, prompt string) error {
-	return gui.createPopupPanel(g, currentView, title, prompt, false, nil, nil)
 }
 
 // createSpecificErrorPanel allows you to create an error popup, specifying the
@@ -175,4 +168,12 @@ func (gui *Gui) createSpecificErrorPanel(message string, nextView *gocui.View, w
 
 func (gui *Gui) createErrorPanel(g *gocui.Gui, message string) error {
 	return gui.createSpecificErrorPanel(message, g.CurrentView(), true)
+}
+
+func (gui *Gui) renderConfirmationOptions() error {
+	optionsMap := map[string]string{
+		"n/esc":   gui.Tr.No,
+		"y/enter": gui.Tr.Yes,
+	}
+	return gui.renderOptionsMap(optionsMap)
 }

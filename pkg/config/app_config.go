@@ -16,10 +16,11 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/OpenPeeDeeP/xdg"
 	yaml "github.com/jesseduffield/yaml"
-	"github.com/shibukawa/configdir"
 )
 
 // UserConfig holds all of the user-configurable options
@@ -49,11 +50,14 @@ type UserConfig struct {
 	// those are found in the commands package
 	CustomCommands CustomCommands `yaml:"customCommands,omitempty"`
 
+	// BulkCommands are commands that apply to all items in a panel e.g.
+	// killing all containers, stopping all services, or pruning all images
+	BulkCommands CustomCommands `yaml:"bulkCommands,omitempty"`
+
 	// OS determines what defaults are set for opening files and links
 	OS OSConfig `yaml:"oS,omitempty"`
 
-	// Update is currently not being used, but like lazygit, it may be used down
-	// the line to help you update automatically.
+	// UpdateConfig determines what the default settings are for updating the ui
 	Update UpdateConfig `yaml:"update,omitempty"`
 
 	// Stats determines how long lazydocker will gather container stats for, and
@@ -190,10 +194,12 @@ type OSConfig struct {
 	OpenLinkCommand string `yaml:"openLinkCommand,omitempty"`
 }
 
-// UpdateConfig is currently not being used, but may be used down the line to
-// allow for automatic updates
+// UpdateConfig determines what the default settings are for updating the ui
 type UpdateConfig struct {
-	Method string `yaml:"method,omitempty"`
+	// RefreshProjectTime determines the time betweens updates of all continues docker commands like docker ps, docker images, etc.
+	// It expects a valid duration like: 100ms, 2s, 200ns
+	// for docs see: https://golang.org/pkg/time/#ParseDuration
+	DockerRefreshInterval time.Duration `yaml:"dockerRefreshInterval,omitempty"`
 }
 
 // GraphConfig specifies how to make a graph of recorded container stats
@@ -257,6 +263,12 @@ type CustomCommands struct {
 
 	// Services contains the custom commands for services
 	Services []CustomCommand `yaml:"services,omitempty"`
+
+	// Images contains the custom commands for images
+	Images []CustomCommand `yaml:"images,omitempty"`
+
+	// Volumes contains the custom commands for volumes
+	Volumes []CustomCommand `yaml:"volumes,omitempty"`
 }
 
 // CustomCommand is a template for a command we want to run against a service or
@@ -281,6 +293,9 @@ type CustomCommand struct {
 	// field has no effect on customcommands under the 'communications' part of
 	// the customCommand config.
 	ServiceNames []string `yaml:"serviceNames"`
+
+	// InternalFunction is the name of a function inside lazydocker that we want to run, as opposed to a command-line command. This is only used internally and can't be configured by the user
+	InternalFunction func() error `yaml:"-"`
 }
 
 // GetDefaultConfig returns the application default configuration NOTE (to
@@ -288,6 +303,11 @@ type CustomCommand struct {
 // the boolean zero value and this will be ignored when parsing the user's
 // config
 func GetDefaultConfig() UserConfig {
+	duration, err := time.ParseDuration("3m")
+	if err != nil {
+		panic(err)
+	}
+
 	return UserConfig{
 		Gui: GuiConfig{
 			ScrollHeight:      2,
@@ -295,7 +315,7 @@ func GetDefaultConfig() UserConfig {
 			IgnoreMouseEvents: false,
 			Theme: ThemeConfig{
 				ActiveBorderColor:   []string{"green", "bold"},
-				InactiveBorderColor: []string{"white"},
+				InactiveBorderColor: []string{"default"},
 				OptionsTextColor:    []string{"blue"},
 			},
 			ShowAllContainers: false,
@@ -324,17 +344,66 @@ func GetDefaultConfig() UserConfig {
 			Containers: []CustomCommand{
 				{
 					Name:    "bash",
-					Command: "docker exec -it {{ .Container.ID }} /bin/sh",
+					Command: "docker exec -it {{ .Container.ID }} /bin/sh -c 'eval $(grep ^$(id -un): /etc/passwd | cut -d : -f 7-)'",
 					Attach:  true,
 				},
 			},
 			Services: []CustomCommand{},
+			Images:   []CustomCommand{},
+			Volumes:  []CustomCommand{},
+		},
+		BulkCommands: CustomCommands{
+			Services: []CustomCommand{
+				{
+					Name:    "up",
+					Command: "{{ .DockerCompose }} up -d",
+				},
+				{
+					Name:    "up (attached)",
+					Command: "{{ .DockerCompose }} up",
+					Attach:  true,
+				},
+				{
+					Name:    "stop",
+					Command: "{{ .DockerCompose }} stop",
+				},
+				{
+					Name:    "pull",
+					Command: "{{ .DockerCompose }} pull",
+					Attach:  true,
+				},
+				{
+					Name:    "build",
+					Command: "{{ .DockerCompose }} build --parallel --force-rm",
+					Attach:  true,
+				},
+				{
+					Name:    "down",
+					Command: "{{ .DockerCompose }} down",
+				},
+				{
+					Name:    "down with volumes",
+					Command: "{{ .DockerCompose }} down --volumes",
+				},
+				{
+					Name:    "down with images",
+					Command: "{{ .DockerCompose }} down --rmi all",
+				},
+				{
+					Name:    "down with volumes and images",
+					Command: "{{ .DockerCompose }} down --volumes --rmi all",
+				},
+			},
+			Containers: []CustomCommand{},
+			Images:     []CustomCommand{},
+			Volumes:    []CustomCommand{},
 		},
 		OS: GetPlatformDefaultConfig(),
 		Update: UpdateConfig{
-			Method: "never",
+			DockerRefreshInterval: time.Millisecond * 100,
 		},
 		Stats: StatsConfig{
+			MaxDuration: duration,
 			Graphs: []GraphConfig{
 				{
 					Caption:  "CPU (%)",
@@ -351,20 +420,21 @@ func GetDefaultConfig() UserConfig {
 	}
 }
 
-// AppConfig contains the base configuration fields required for lazygit.
+// AppConfig contains the base configuration fields required for lazydocker.
 type AppConfig struct {
 	Debug       bool   `long:"debug" env:"DEBUG" default:"false"`
 	Version     string `long:"version" env:"VERSION" default:"unversioned"`
 	Commit      string `long:"commit" env:"COMMIT"`
 	BuildDate   string `long:"build-date" env:"BUILD_DATE"`
-	Name        string `long:"name" env:"NAME" default:"lazygit"`
+	Name        string `long:"name" env:"NAME" default:"lazydocker"`
 	BuildSource string `long:"build-source" env:"BUILD_SOURCE" default:""`
 	UserConfig  *UserConfig
 	ConfigDir   string
+	ProjectDir  string
 }
 
 // NewAppConfig makes a new app config
-func NewAppConfig(name, version, commit, date string, buildSource string, debuggingFlag bool) (*AppConfig, error) {
+func NewAppConfig(name, version, commit, date string, buildSource string, debuggingFlag bool, composeFiles []string, projectDir string) (*AppConfig, error) {
 	configDir, err := findOrCreateConfigDir(name)
 	if err != nil {
 		return nil, err
@@ -375,29 +445,53 @@ func NewAppConfig(name, version, commit, date string, buildSource string, debugg
 		return nil, err
 	}
 
+	// Pass compose files as individual -f flags to docker-compose
+	if len(composeFiles) > 0 {
+		userConfig.CommandTemplates.DockerCompose += " -f " + strings.Join(composeFiles, " -f ")
+	}
+
 	appConfig := &AppConfig{
 		Name:        name,
 		Version:     version,
 		Commit:      commit,
 		BuildDate:   date,
-		Debug:       true, // TODO: restore os.Getenv("DEBUG") == "TRUE"
+		Debug:       debuggingFlag || os.Getenv("DEBUG") == "TRUE",
 		BuildSource: buildSource,
 		UserConfig:  userConfig,
 		ConfigDir:   configDir,
+		ProjectDir:  projectDir,
 	}
 
 	return appConfig, nil
 }
 
-func findOrCreateConfigDir(projectName string) (string, error) {
-	configDirs := configdir.New("jesseduffield", projectName)
-	folders := configDirs.QueryFolders(configdir.Global)
+func configDirForVendor(vendor string, projectName string) string {
+	envConfigDir := os.Getenv("CONFIG_DIR")
+	if envConfigDir != "" {
+		return envConfigDir
+	}
+	configDirs := xdg.New(vendor, projectName)
+	return configDirs.ConfigHome()
+}
 
-	if err := folders[0].CreateParentDir("foo"); err != nil {
+func configDir(projectName string) string {
+	legacyConfigDirectory := configDirForVendor("jesseduffield", projectName)
+	if _, err := os.Stat(legacyConfigDirectory); !os.IsNotExist(err) {
+		return legacyConfigDirectory
+	}
+	configDirectory := configDirForVendor("", projectName)
+	return configDirectory
+}
+
+func findOrCreateConfigDir(projectName string) (string, error) {
+	folder := configDir(projectName)
+
+	err := os.MkdirAll(folder, 0755)
+	if err != nil {
 		return "", err
 	}
 
-	return folders[0].Path, nil
+	return folder, nil
 }
 
 func loadUserConfigWithDefaults(configDir string) (*UserConfig, error) {

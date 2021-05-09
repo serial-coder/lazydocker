@@ -7,6 +7,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazydocker/pkg/commands"
+	"github.com/jesseduffield/lazydocker/pkg/config"
 	"github.com/jesseduffield/lazydocker/pkg/utils"
 )
 
@@ -96,7 +97,7 @@ func (gui *Gui) renderVolumeConfig(mainView *gocui.View, volume *commands.Volume
 		}
 
 		if volume.Volume.UsageData != nil {
-			output += utils.WithPadding("RefCount: ", padding) + string(volume.Volume.UsageData.RefCount) + "\n"
+			output += utils.WithPadding("RefCount: ", padding) + fmt.Sprintf("%d", volume.Volume.UsageData.RefCount) + "\n"
 			output += utils.WithPadding("Size: ", padding) + utils.FormatBinaryBytes(int(volume.Volume.UsageData.Size)) + "\n"
 		}
 
@@ -239,8 +240,8 @@ func (gui *Gui) handleVolumesRemoveMenu(g *gocui.Gui, v *gocui.View) error {
 	return gui.createMenu("", options, len(options), handleMenuPress)
 }
 
-func (gui *Gui) handlePruneVolumes(g *gocui.Gui, v *gocui.View) error {
-	return gui.createConfirmationPanel(gui.g, v, gui.Tr.Confirm, gui.Tr.ConfirmPruneVolumes, func(g *gocui.Gui, v *gocui.View) error {
+func (gui *Gui) handlePruneVolumes() error {
+	return gui.createConfirmationPanel(gui.g, gui.getVolumesView(), gui.Tr.Confirm, gui.Tr.ConfirmPruneVolumes, func(g *gocui.Gui, v *gocui.View) error {
 		return gui.WithWaitingStatus(gui.Tr.PruningStatus, func() error {
 			err := gui.DockerCommand.PruneVolumes()
 			if err != nil {
@@ -249,4 +250,33 @@ func (gui *Gui) handlePruneVolumes(g *gocui.Gui, v *gocui.View) error {
 			return nil
 		})
 	}, nil)
+}
+
+func (gui *Gui) handleVolumesCustomCommand(g *gocui.Gui, v *gocui.View) error {
+	volume, err := gui.getSelectedVolume()
+	if err != nil {
+		return nil
+	}
+
+	commandObject := gui.DockerCommand.NewCommandObject(commands.CommandObject{
+		Volume: volume,
+	})
+
+	customCommands := gui.Config.UserConfig.CustomCommands.Volumes
+
+	return gui.createCustomCommandMenu(customCommands, commandObject)
+}
+
+func (gui *Gui) handleVolumesBulkCommand(g *gocui.Gui, v *gocui.View) error {
+	baseBulkCommands := []config.CustomCommand{
+		{
+			Name:             gui.Tr.PruneVolumes,
+			InternalFunction: gui.handlePruneVolumes,
+		},
+	}
+
+	bulkCommands := append(baseBulkCommands, gui.Config.UserConfig.BulkCommands.Volumes...)
+	commandObject := gui.DockerCommand.NewCommandObject(commands.CommandObject{})
+
+	return gui.createBulkCommandMenu(bulkCommands, commandObject)
 }

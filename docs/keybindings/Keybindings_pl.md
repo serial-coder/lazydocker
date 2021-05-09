@@ -1,69 +1,74 @@
 # Lazydocker menu
 
-## Status
+## Projekt
 
 <pre>
-  <kbd>e</kbd>: edit lazydocker config
-  <kbd>o</kbd>: open lazydocker config
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>￨</kbd>: next tab
-  <kbd>m</kbd>: view logs
-  <kbd>enter</kbd>: focus main panel
+  <kbd>e</kbd>: edytuj konfigurację
+  <kbd>o</kbd>: otwórz konfigurację
+  <kbd>[</kbd>: poprzednia zakładka
+  <kbd>]</kbd>: następna zakładka
+  <kbd>m</kbd>: pokaż logi
+  <kbd>enter</kbd>: skup na głównym panelu
 </pre>
 
-## Containers
+## Kontenery
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove
-  <kbd>s</kbd>: stop
-  <kbd>r</kbd>: restart
-  <kbd>a</kbd>: attach
-  <kbd>D</kbd>: prune exited containers
-  <kbd>m</kbd>: view logs
-  <kbd>c</kbd>: run predefined custom command
-  <kbd>enter</kbd>: focus main panel
+  <kbd>[</kbd>: poprzednia zakładka
+  <kbd>]</kbd>: następna zakładka
+  <kbd>d</kbd>: usuń
+  <kbd>e</kbd>: Hide/Show stopped containers
+  <kbd>s</kbd>: zatrzymaj
+  <kbd>r</kbd>: restartuj
+  <kbd>a</kbd>: przyczep
+  <kbd>m</kbd>: pokaż logi
+  <kbd>E</kbd>: exec shell
+  <kbd>c</kbd>: wykonaj predefiniowaną własną komende
+  <kbd>b</kbd>: view bulk commands
+  <kbd>w</kbd>: open in browser (first port is http)
+  <kbd>enter</kbd>: skup na głównym panelu
 </pre>
 
-## Services
+## Serwisy
 
 <pre>
-  <kbd>d</kbd>: remove containers
-  <kbd>s</kbd>: stop
-  <kbd>r</kbd>: restart
-  <kbd>a</kbd>: attach
-  <kbd>m</kbd>: view logs
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>R</kbd>: view restart options
-  <kbd>c</kbd>: run predefined custom command
-  <kbd>enter</kbd>: focus main panel
+  <kbd>d</kbd>: usuń kontenery
+  <kbd>s</kbd>: zatrzymaj
+  <kbd>r</kbd>: restartuj
+  <kbd>a</kbd>: przyczep
+  <kbd>m</kbd>: pokaż logi
+  <kbd>[</kbd>: poprzednia zakładka
+  <kbd>]</kbd>: następna zakładka
+  <kbd>R</kbd>: pokaż opcje restartu
+  <kbd>c</kbd>: wykonaj predefiniowaną własną komende
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: skup na głównym panelu
 </pre>
 
-## Images
+## Obrazy
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove image
-  <kbd>D</kbd>: prune unused images
-  <kbd>enter</kbd>: focus main panel
+  <kbd>[</kbd>: poprzednia zakładka
+  <kbd>]</kbd>: następna zakładka
+  <kbd>c</kbd>: wykonaj predefiniowaną własną komende
+  <kbd>d</kbd>: usuń obraz
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: skup na głównym panelu
 </pre>
 
-## Volumes
+## Wolumeny
 
 <pre>
-  <kbd>[</kbd>: previous tab
-  <kbd>]</kbd>: next tab
-  <kbd>d</kbd>: remove volume
-  <kbd>D</kbd>: prune unused volumes
-  <kbd>enter</kbd>: focus main panel
+  <kbd>[</kbd>: poprzednia zakładka
+  <kbd>]</kbd>: następna zakładka
+  <kbd>c</kbd>: wykonaj predefiniowaną własną komende
+  <kbd>d</kbd>: usuń wolumen
+  <kbd>b</kbd>: view bulk commands
+  <kbd>enter</kbd>: skup na głównym panelu
 </pre>
 
-## Main
+## Główne
 
 <pre>
-  <kbd>esc</kbd>: return
+  <kbd>esc</kbd>: powrót
 </pre>

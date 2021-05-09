@@ -11,6 +11,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jesseduffield/gocui"
 	"github.com/jesseduffield/lazydocker/pkg/commands"
+	"github.com/jesseduffield/lazydocker/pkg/config"
 	"github.com/jesseduffield/lazydocker/pkg/utils"
 )
 
@@ -185,6 +186,11 @@ func (gui *Gui) renderContainerLogs(container *commands.Container) error {
 		)
 		cmd := gui.OSCommand.RunCustomCommand(command)
 
+		// Ensure the child process is treated as a group, as the child process spawns
+		// its own children. Termination requires sending the signal to the group
+		// process ID.
+		gui.OSCommand.PrepareForChildren(cmd)
+
 		mainView := gui.getMainView()
 		cmd.Stdout = mainView
 		cmd.Stderr = mainView
@@ -277,6 +283,7 @@ func (gui *Gui) refreshContainersAndServices() error {
 	gui.g.Update(func(g *gocui.Gui) error {
 		containersView.Clear()
 		isFocused := gui.g.CurrentView().Name() == "containers"
+
 		list, err := utils.RenderList(gui.DockerCommand.DisplayContainers, utils.IsFocused(isFocused))
 		if err != nil {
 			return err
@@ -369,6 +376,11 @@ type removeContainerOption struct {
 // GetDisplayStrings is a function.
 func (r *removeContainerOption) GetDisplayStrings(isFocused bool) []string {
 	return []string{r.description, color.New(color.FgRed).Sprint(r.command)}
+}
+
+func (gui *Gui) handleHideStoppedContainers(g *gocui.Gui, v *gocui.View) error {
+	gui.DockerCommand.ShowExited = !gui.DockerCommand.ShowExited
+	return nil
 }
 
 func (gui *Gui) handleContainersRemoveMenu(g *gocui.Gui, v *gocui.View) error {
@@ -470,8 +482,8 @@ func (gui *Gui) handleContainerAttach(g *gocui.Gui, v *gocui.View) error {
 	return gui.Errors.ErrSubProcess
 }
 
-func (gui *Gui) handlePruneContainers(g *gocui.Gui, v *gocui.View) error {
-	return gui.createConfirmationPanel(gui.g, v, gui.Tr.Confirm, gui.Tr.ConfirmPruneContainers, func(g *gocui.Gui, v *gocui.View) error {
+func (gui *Gui) handlePruneContainers() error {
+	return gui.createConfirmationPanel(gui.g, gui.getContainersView(), gui.Tr.Confirm, gui.Tr.ConfirmPruneContainers, func(g *gocui.Gui, v *gocui.View) error {
 		return gui.WithWaitingStatus(gui.Tr.PruningStatus, func() error {
 			err := gui.DockerCommand.PruneContainers()
 			if err != nil {
@@ -497,6 +509,21 @@ func (gui *Gui) handleContainerViewLogs(g *gocui.Gui, v *gocui.View) error {
 	return gui.Errors.ErrSubProcess
 }
 
+func (gui *Gui) handleContainersExecShell(g *gocui.Gui, v *gocui.View) error {
+	container, err := gui.getSelectedContainer()
+	if err != nil {
+		return nil
+	}
+	commandObject := gui.DockerCommand.NewCommandObject(commands.CommandObject{
+		Container: container,
+	})
+	resolvedCommand := utils.ApplyTemplate("docker exec -it {{ .Container.ID }} /bin/sh -c 'eval $(grep ^$(id -un): /etc/passwd | cut -d : -f 7-)'", commandObject)
+	// attach and return the subprocess error
+	cmd := gui.OSCommand.ExecutableFromString(resolvedCommand)
+	gui.SubProcess = cmd
+	return gui.Errors.ErrSubProcess
+}
+
 func (gui *Gui) handleContainersCustomCommand(g *gocui.Gui, v *gocui.View) error {
 	container, err := gui.getSelectedContainer()
 	if err != nil {
@@ -510,4 +537,75 @@ func (gui *Gui) handleContainersCustomCommand(g *gocui.Gui, v *gocui.View) error
 	customCommands := gui.Config.UserConfig.CustomCommands.Containers
 
 	return gui.createCustomCommandMenu(customCommands, commandObject)
+}
+
+func (gui *Gui) handleStopContainers() error {
+	return gui.createConfirmationPanel(gui.g, gui.getContainersView(), gui.Tr.Confirm, gui.Tr.ConfirmStopContainers, func(g *gocui.Gui, v *gocui.View) error {
+		return gui.WithWaitingStatus(gui.Tr.StoppingStatus, func() error {
+
+			for _, container := range gui.DockerCommand.Containers {
+				_ = container.Stop()
+			}
+
+			return nil
+		})
+	}, nil)
+}
+
+func (gui *Gui) handleRemoveContainers() error {
+	return gui.createConfirmationPanel(gui.g, gui.getContainersView(), gui.Tr.Confirm, gui.Tr.ConfirmRemoveContainers, func(g *gocui.Gui, v *gocui.View) error {
+		return gui.WithWaitingStatus(gui.Tr.RemovingStatus, func() error {
+
+			for _, container := range gui.DockerCommand.Containers {
+				_ = container.Remove(types.ContainerRemoveOptions{Force: true})
+			}
+
+			return nil
+		})
+	}, nil)
+}
+
+func (gui *Gui) handleContainersBulkCommand(g *gocui.Gui, v *gocui.View) error {
+	baseBulkCommands := []config.CustomCommand{
+		{
+			Name:             gui.Tr.StopAllContainers,
+			InternalFunction: gui.handleStopContainers,
+		},
+		{
+			Name:             gui.Tr.RemoveAllContainers,
+			InternalFunction: gui.handleRemoveContainers,
+		},
+		{
+			Name:             gui.Tr.PruneContainers,
+			InternalFunction: gui.handlePruneContainers,
+		},
+	}
+
+	bulkCommands := append(baseBulkCommands, gui.Config.UserConfig.BulkCommands.Containers...)
+	commandObject := gui.DockerCommand.NewCommandObject(commands.CommandObject{})
+
+	return gui.createBulkCommandMenu(bulkCommands, commandObject)
+}
+
+// Open first port in browser
+func (gui *Gui) handleContainersOpenInBrowserCommand(g *gocui.Gui, v *gocui.View) error {
+	container, err := gui.getSelectedContainer()
+	if err != nil {
+		return nil
+	}
+	// skip if no any ports
+	if len(container.Container.Ports) == 0 {
+		return nil
+	}
+	// skip if the first port is not published
+	port := container.Container.Ports[0]
+	if port.IP == "" {
+		return nil
+	}
+	ip := port.IP
+	if ip == "0.0.0.0" {
+		ip = "localhost"
+	}
+	link := fmt.Sprintf("http://%s:%d/", ip, port.PublicPort)
+	return gui.OSCommand.OpenLink(link)
 }

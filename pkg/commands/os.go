@@ -6,10 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/go-errors/errors"
@@ -18,7 +16,6 @@ import (
 	"github.com/jesseduffield/lazydocker/pkg/utils"
 	"github.com/mgutz/str"
 	"github.com/sirupsen/logrus"
-	gitconfig "github.com/tcnksm/go-gitconfig"
 )
 
 // Platform stores the os state
@@ -34,23 +31,21 @@ type Platform struct {
 
 // OSCommand holds all the os commands
 type OSCommand struct {
-	Log                *logrus.Entry
-	Platform           *Platform
-	Config             *config.AppConfig
-	command            func(string, ...string) *exec.Cmd
-	getGlobalGitConfig func(string) (string, error)
-	getenv             func(string) string
+	Log      *logrus.Entry
+	Platform *Platform
+	Config   *config.AppConfig
+	command  func(string, ...string) *exec.Cmd
+	getenv   func(string) string
 }
 
 // NewOSCommand os command runner
 func NewOSCommand(log *logrus.Entry, config *config.AppConfig) *OSCommand {
 	return &OSCommand{
-		Log:                log,
-		Platform:           getPlatform(),
-		Config:             config,
-		command:            exec.Command,
-		getGlobalGitConfig: gitconfig.Global,
-		getenv:             os.Getenv,
+		Log:      log,
+		Platform: getPlatform(),
+		Config:   config,
+		command:  exec.Command,
+		getenv:   os.Getenv,
 	}
 }
 
@@ -64,7 +59,7 @@ func (c *OSCommand) SetCommand(cmd func(string, ...string) *exec.Cmd) {
 func (c *OSCommand) RunCommandWithOutput(command string) (string, error) {
 	cmd := c.ExecutableFromString(command)
 	before := time.Now()
-	output, err := sanitisedCommandOutput(cmd.CombinedOutput())
+	output, err := sanitisedCommandOutput(cmd.Output())
 	c.Log.Warn(fmt.Sprintf("'%s': %s", command, time.Since(before)))
 	return output, err
 }
@@ -80,41 +75,11 @@ func (c *OSCommand) RunExecutable(cmd *exec.Cmd) error {
 	return err
 }
 
-// ExecutableFromString takes a string like `git status` and returns an executable command for it
+// ExecutableFromString takes a string like `docker ps -a` and returns an executable command for it
 func (c *OSCommand) ExecutableFromString(commandStr string) *exec.Cmd {
 	splitCmd := str.ToArgv(commandStr)
 	// c.Log.Info(splitCmd)
 	return c.command(splitCmd[0], splitCmd[1:]...)
-}
-
-// RunCommandWithOutputLive runs RunCommandWithOutputLiveWrapper
-func (c *OSCommand) RunCommandWithOutputLive(command string, output func(string) string) error {
-	return RunCommandWithOutputLiveWrapper(c, command, output)
-}
-
-// DetectUnamePass detect a username / password question in a command
-// ask is a function that gets executen when this function detect you need to fillin a password
-// The ask argument will be "username" or "password" and expects the user's password or username back
-func (c *OSCommand) DetectUnamePass(command string, ask func(string) string) error {
-	ttyText := ""
-	errMessage := c.RunCommandWithOutputLive(command, func(word string) string {
-		ttyText = ttyText + " " + word
-
-		prompts := map[string]string{
-			"password": `Password\s*for\s*'.+':`,
-			"username": `Username\s*for\s*'.+':`,
-		}
-
-		for askFor, pattern := range prompts {
-			if match, _ := regexp.MatchString(pattern, ttyText); match {
-				ttyText = ""
-				return ask(askFor)
-			}
-		}
-
-		return ""
-	})
-	return errMessage
 }
 
 // RunCommand runs a command and just returns the error
@@ -149,11 +114,12 @@ func sanitisedCommandOutput(output []byte, err error) (string, error) {
 	outputString := string(output)
 	if err != nil {
 		// errors like 'exit status 1' are not very useful so we'll create an error
-		// from the combined output
-		if outputString == "" {
-			return "", WrapError(err)
+		// from stderr if we got an ExitError
+		exitError, ok := err.(*exec.ExitError)
+		if ok {
+			return outputString, errors.New(string(exitError.Stderr))
 		}
-		return outputString, errors.New(outputString)
+		return "", WrapError(err)
 	}
 	return outputString, nil
 }
@@ -185,11 +151,7 @@ func (c *OSCommand) OpenLink(link string) error {
 // EditFile opens a file in a subprocess using whatever editor is available,
 // falling back to core.editor, VISUAL, EDITOR, then vi
 func (c *OSCommand) EditFile(filename string) (*exec.Cmd, error) {
-	editor, _ := c.getGlobalGitConfig("core.editor")
-
-	if editor == "" {
-		editor = c.getenv("VISUAL")
-	}
+	editor := c.getenv("VISUAL")
 	if editor == "" {
 		editor = c.getenv("EDITOR")
 	}
@@ -199,7 +161,7 @@ func (c *OSCommand) EditFile(filename string) (*exec.Cmd, error) {
 		}
 	}
 	if editor == "" {
-		return nil, errors.New("No editor defined in $VISUAL, $EDITOR, or git config")
+		return nil, errors.New("No editor defined in $VISUAL or $EDITOR")
 	}
 
 	return c.PrepareSubProcess(editor, filename), nil
@@ -296,7 +258,7 @@ func (c *OSCommand) RunPreparedCommand(cmd *exec.Cmd) error {
 
 // GetLazydockerPath returns the path of the currently executed file
 func (c *OSCommand) GetLazydockerPath() string {
-	ex, err := os.Executable() // get the executable path for git to use
+	ex, err := os.Executable() // get the executable path for docker to use
 	if err != nil {
 		ex = os.Args[0] // fallback to the first call argument if needed
 	}
@@ -366,25 +328,4 @@ func (c *OSCommand) PipeCommands(commandStrings ...string) error {
 		return errors.New(strings.Join(finalErrors, "\n"))
 	}
 	return nil
-}
-
-// Kill kills a process. If the process has Setpgid == true, then we have anticipated that it might spawn its own child processes, so we've given it a process group ID (PGID) equal to its process id (PID) and given its child processes will inherit the PGID, we can kill that group, rather than killing the process itself.
-func (c *OSCommand) Kill(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		// somebody got to it before we were able to, poor bastard
-		return nil
-	}
-	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid == true {
-		// minus sign means we're talking about a PGID as opposed to a PID
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-
-	return cmd.Process.Kill()
-}
-
-// PrepareForChildren sets Setpgid to true on the cmd, so that when we run it as a sideproject, we can kill its group rather than the process itself. This is because some commands, like `docker-compose logs` spawn multiple children processes, and killing the parent process isn't sufficient for killing those child processes. We set the group id here, and then in subprocess.go we check if the group id is set and if so, we kill the whole group rather than just the one process.
-func (c *OSCommand) PrepareForChildren(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
 }

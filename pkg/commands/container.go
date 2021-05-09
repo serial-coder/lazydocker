@@ -2,10 +2,13 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/docker/docker/api/types/container"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -50,17 +53,18 @@ type Details struct {
 	Path    string    `json:"Path"`
 	Args    []string  `json:"Args"`
 	State   struct {
-		Status     string    `json:"Status"`
-		Running    bool      `json:"Running"`
-		Paused     bool      `json:"Paused"`
-		Restarting bool      `json:"Restarting"`
-		OOMKilled  bool      `json:"OOMKilled"`
-		Dead       bool      `json:"Dead"`
-		Pid        int       `json:"Pid"`
-		ExitCode   int       `json:"ExitCode"`
-		Error      string    `json:"Error"`
-		StartedAt  time.Time `json:"StartedAt"`
-		FinishedAt time.Time `json:"FinishedAt"`
+		Status     string       `json:"Status"`
+		Running    bool         `json:"Running"`
+		Paused     bool         `json:"Paused"`
+		Restarting bool         `json:"Restarting"`
+		OOMKilled  bool         `json:"OOMKilled"`
+		Dead       bool         `json:"Dead"`
+		Pid        int          `json:"Pid"`
+		ExitCode   int          `json:"ExitCode"`
+		Error      string       `json:"Error"`
+		StartedAt  time.Time    `json:"StartedAt"`
+		FinishedAt time.Time    `json:"FinishedAt"`
+		Health     types.Health `json:"Health"`
 	} `json:"State"`
 	Image           string      `json:"Image"`
 	ResolvConfPath  string      `json:"ResolvConfPath"`
@@ -245,17 +249,42 @@ type ContainerCliStat struct {
 
 // GetDisplayStrings returns the dispaly string of Container
 func (c *Container) GetDisplayStrings(isFocused bool) []string {
-	return []string{c.GetDisplayStatus(), c.Name, c.GetDisplayCPUPerc()}
+	image := strings.TrimPrefix(c.Container.Image, "sha256:")
+
+	return []string{c.GetDisplayStatus(), c.GetDisplaySubstatus(), c.Name, c.GetDisplayCPUPerc(), utils.ColoredString(image, color.FgMagenta)}
 }
 
 // GetDisplayStatus returns the colored status of the container
 func (c *Container) GetDisplayStatus() string {
-	state := c.Container.State
-	if c.Container.State == "exited" {
-		state += " (" + strconv.Itoa(c.Details.State.ExitCode) + ")"
+	return utils.ColoredString(c.Container.State, c.GetColor())
+}
+
+// GetDisplayStatus returns the exit code if the container has exited, and the health status if the container is running (and has a health check)
+func (c *Container) GetDisplaySubstatus() string {
+	switch c.Container.State {
+	case "exited":
+		return utils.ColoredString(
+			fmt.Sprintf("(%s)", strconv.Itoa(c.Details.State.ExitCode)), c.GetColor(),
+		)
+	case "running":
+		return c.getHealthStatus()
+	default:
+		return ""
+	}
+}
+
+func (c *Container) getHealthStatus() string {
+	healthStatusColorMap := map[string]color.Attribute{
+		"healthy":   color.FgGreen,
+		"unhealthy": color.FgRed,
+		"starting":  color.FgYellow,
 	}
 
-	return utils.ColoredString(state, c.GetColor())
+	healthStatus := c.Details.State.Health.Status
+	if healthStatusColor, ok := healthStatusColorMap[healthStatus]; ok {
+		return utils.ColoredString(fmt.Sprintf("(%s)", healthStatus), healthStatusColor)
+	}
+	return ""
 }
 
 // GetDisplayCPUPerc colors the cpu percentage based on how extreme it is
@@ -294,7 +323,7 @@ func (c *Container) GetColor() color.Attribute {
 	switch c.Container.State {
 	case "exited":
 		if c.Details.State.ExitCode == 0 {
-			return color.FgBlue
+			return color.FgYellow
 		}
 		return color.FgRed
 	case "created":
@@ -316,6 +345,7 @@ func (c *Container) GetColor() color.Attribute {
 
 // Remove removes the container
 func (c *Container) Remove(options types.ContainerRemoveOptions) error {
+	c.Log.Warn(fmt.Sprintf("removing container %s", c.Name))
 	if err := c.Client.ContainerRemove(context.Background(), c.ID, options); err != nil {
 		if strings.Contains(err.Error(), "Stop the container before attempting removal or force remove") {
 			return ComplexError{
@@ -332,16 +362,20 @@ func (c *Container) Remove(options types.ContainerRemoveOptions) error {
 
 // Stop stops the container
 func (c *Container) Stop() error {
+	c.Log.Warn(fmt.Sprintf("stopping container %s", c.Name))
 	return c.Client.ContainerStop(context.Background(), c.ID, nil)
 }
 
 // Restart restarts the container
 func (c *Container) Restart() error {
+	c.Log.Warn(fmt.Sprintf("restarting container %s", c.Name))
 	return c.Client.ContainerRestart(context.Background(), c.ID, nil)
 }
 
 // Attach attaches the container
 func (c *Container) Attach() (*exec.Cmd, error) {
+	c.Log.Warn(fmt.Sprintf("attaching to container %s", c.Name))
+
 	// verify that we can in fact attach to this container
 	if !c.Details.Config.OpenStdin {
 		return nil, errors.New(c.Tr.UnattachableContainerError)
@@ -356,7 +390,17 @@ func (c *Container) Attach() (*exec.Cmd, error) {
 }
 
 // Top returns process information
-func (c *Container) Top() (types.ContainerProcessList, error) {
+func (c *Container) Top() (container.ContainerTopOKBody, error) {
+	detail, err := c.Inspect()
+	if err != nil {
+		return container.ContainerTopOKBody{}, err
+	}
+
+	// check container status
+	if !detail.State.Running {
+		return container.ContainerTopOKBody{}, errors.New("container is not running")
+	}
+
 	return c.Client.ContainerTop(context.Background(), c.ID, []string{})
 }
 
@@ -401,7 +445,7 @@ func (c *Container) Inspect() (types.ContainerJSON, error) {
 
 // RenderTop returns details about the container
 func (c *Container) RenderTop() (string, error) {
-	result, err := c.Client.ContainerTop(context.Background(), c.ID, []string{})
+	result, err := c.Top()
 	if err != nil {
 		return "", err
 	}

@@ -22,19 +22,26 @@ func NewTranslationSet(log *logrus.Entry) *TranslationSet {
 
 	log.Info("language: " + userLang)
 
-	set := englishSet()
+	baseSet := englishSet()
 
-	userLang = "pl"
-
-	if strings.HasPrefix(userLang, "pl") {
-		mergo.Merge(&set, polishSet(), mergo.WithOverride)
+	for languageCode, translationSet := range GetTranslationSets() {
+		if strings.HasPrefix(userLang, languageCode) {
+			_ = mergo.Merge(&baseSet, translationSet, mergo.WithOverride)
+		}
 	}
 
-	if strings.HasPrefix(userLang, "nl") {
-		mergo.Merge(&set, polishSet(), mergo.WithOverride)
-	}
+	return &baseSet
+}
 
-	return &set
+// GetTranslationSets gets all the translation sets, keyed by language code
+func GetTranslationSets() map[string]TranslationSet {
+	return map[string]TranslationSet{
+		"pl": polishSet(),
+		"nl": dutchSet(),
+		"de": germanSet(),
+		"tr": turkishSet(),
+		"en": englishSet(),
+	}
 }
 
 // detectLanguage extracts user language from environment

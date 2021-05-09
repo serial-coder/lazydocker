@@ -15,9 +15,6 @@ func (gui *Gui) refreshSidePanels(g *gocui.Gui) error {
 	if err := gui.refreshImages(); err != nil {
 		return err
 	}
-	if err := gui.refreshStatus(); err != nil {
-		return err
-	}
 
 	return nil
 }
@@ -44,7 +41,8 @@ func (gui *Gui) nextView(g *gocui.Gui, v *gocui.View) error {
 		panic(err)
 	}
 	gui.resetMainView()
-	return gui.switchFocus(g, v, focusedView)
+	gui.popPreviousView()
+	return gui.switchFocus(g, v, focusedView, false)
 }
 
 func (gui *Gui) previousView(g *gocui.Gui, v *gocui.View) error {
@@ -69,7 +67,8 @@ func (gui *Gui) previousView(g *gocui.Gui, v *gocui.View) error {
 		panic(err)
 	}
 	gui.resetMainView()
-	return gui.switchFocus(g, v, focusedView)
+	gui.popPreviousView()
+	return gui.switchFocus(g, v, focusedView, false)
 }
 
 func (gui *Gui) resetMainView() {
@@ -85,8 +84,8 @@ func (gui *Gui) newLineFocused(v *gocui.View) error {
 	switch v.Name() {
 	case "menu":
 		return gui.handleMenuSelect(gui.g, v)
-	case "status":
-		return gui.handleStatusSelect(gui.g, v)
+	case "project":
+		return gui.handleProjectSelect(gui.g, v)
 	case "services":
 		return gui.handleServiceSelect(gui.g, v)
 	case "containers":
@@ -105,28 +104,49 @@ func (gui *Gui) newLineFocused(v *gocui.View) error {
 	}
 }
 
+func (gui *Gui) popPreviousView() string {
+	if gui.State.PreviousViews.Len() > 0 {
+		return gui.State.PreviousViews.Pop().(string)
+	}
+
+	return ""
+}
+
+func (gui *Gui) peekPreviousView() string {
+	if gui.State.PreviousViews.Len() > 0 {
+		return gui.State.PreviousViews.Peek().(string)
+	}
+
+	return ""
+}
+
+func (gui *Gui) pushPreviousView(name string) {
+	gui.State.PreviousViews.Push(name)
+}
+
 func (gui *Gui) returnFocus(g *gocui.Gui, v *gocui.View) error {
-	previousView, err := g.View(gui.State.PreviousView)
+	previousViewName := gui.popPreviousView()
+	previousView, err := g.View(previousViewName)
 	if err != nil {
 		// always fall back to services view if there's no 'previous' view stored
-		previousView, err = g.View("services")
+		previousView, err = g.View(gui.initiallyFocusedViewName())
 		if err != nil {
 			gui.Log.Error(err)
 		}
 	}
-	return gui.switchFocus(g, v, previousView)
+	return gui.switchFocus(g, v, previousView, true)
 }
 
 // pass in oldView = nil if you don't want to be able to return to your old view
 // TODO: move some of this logic into our onFocusLost and onFocus hooks
-func (gui *Gui) switchFocus(g *gocui.Gui, oldView, newView *gocui.View) error {
+func (gui *Gui) switchFocus(g *gocui.Gui, oldView, newView *gocui.View, returning bool) error {
 	// we assume we'll never want to return focus to a popup panel i.e.
 	// we should never stack popup panels
-	if oldView != nil && !gui.isPopupPanel(oldView.Name()) {
-		gui.State.PreviousView = oldView.Name()
+	if oldView != nil && !gui.isPopupPanel(oldView.Name()) && !returning {
+		gui.pushPreviousView(oldView.Name())
 	}
 
-	gui.Log.Info("setting highlight to true for view" + newView.Name())
+	gui.Log.Info("setting highlight to true for view " + newView.Name())
 	gui.Log.Info("new focused view is " + newView.Name())
 	if _, err := g.SetCurrentView(newView.Name()); err != nil {
 		return err
@@ -142,11 +162,6 @@ func (gui *Gui) switchFocus(g *gocui.Gui, oldView, newView *gocui.View) error {
 	}
 
 	return gui.newLineFocused(newView)
-}
-
-func (gui *Gui) resetOrigin(v *gocui.View) error {
-	_ = v.SetCursor(0, 0)
-	return v.SetOrigin(0, 0)
 }
 
 // if the cursor down past the last item, move it to the last line
@@ -241,6 +256,11 @@ func (gui *Gui) renderOptionsMap(optionsMap map[string]string) error {
 	return gui.renderString(gui.g, "options", gui.optionsMapToString(optionsMap))
 }
 
+func (gui *Gui) getProjectView() *gocui.View {
+	v, _ := gui.g.View("project")
+	return v
+}
+
 func (gui *Gui) getServicesView() *gocui.View {
 	v, _ := gui.g.View("services")
 	return v
@@ -263,11 +283,6 @@ func (gui *Gui) getVolumesView() *gocui.View {
 
 func (gui *Gui) getMainView() *gocui.View {
 	v, _ := gui.g.View("main")
-	return v
-}
-
-func (gui *Gui) getStatusView() *gocui.View {
-	v, _ := gui.g.View("status")
 	return v
 }
 
@@ -317,40 +332,15 @@ func (gui *Gui) changeSelectedLine(line *int, total int, up bool) {
 	}
 }
 
-func (gui *Gui) refreshSelectedLine(line *int, total int) {
-	if *line == -1 && total > 0 {
-		*line = 0
-	} else if total-1 < *line {
-		*line = total - 1
-	}
-}
-
-func (gui *Gui) renderListPanel(v *gocui.View, items interface{}) error {
-	gui.g.Update(func(g *gocui.Gui) error {
-		isFocused := gui.g.CurrentView().Name() == v.Name()
-		list, err := utils.RenderList(items, utils.IsFocused(isFocused))
-		if err != nil {
-			return gui.createErrorPanel(gui.g, err.Error())
-		}
-		v.Clear()
-		fmt.Fprint(v, list)
-		return nil
-	})
-	return nil
-}
-
 func (gui *Gui) renderPanelOptions() error {
 	currentView := gui.g.CurrentView()
 	switch currentView.Name() {
 	case "menu":
 		return gui.renderMenuOptions()
+	case "confirmation":
+		return gui.renderConfirmationOptions()
 	}
 	return gui.renderGlobalOptions()
-}
-
-func (gui *Gui) handleFocusView(g *gocui.Gui, v *gocui.View) error {
-	_, err := gui.g.SetCurrentView(v.Name())
-	return err
 }
 
 func (gui *Gui) isPopupPanel(viewName string) bool {

@@ -7,6 +7,7 @@ package gocui
 import (
 	standardErrors "errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-errors/errors"
@@ -89,15 +90,24 @@ type Gui struct {
 	// SupportOverlaps is true when we allow for view edges to overlap with other
 	// view edges
 	SupportOverlaps bool
+
+	// tickingMutex ensures we don't have two loops ticking. The point of 'ticking'
+	// is to refresh the gui rapidly so that loader characters can be animated.
+	tickingMutex sync.Mutex
 }
 
 // NewGui returns a new Gui object with a given output mode.
 func NewGui(mode OutputMode, supportOverlaps bool) (*Gui, error) {
-	if err := termbox.Init(); err != nil {
+	g := &Gui{}
+
+	var err error
+	if g.maxX, g.maxY, err = g.getTermWindowSize(); err != nil {
 		return nil, err
 	}
 
-	g := &Gui{}
+	if err := termbox.Init(); err != nil {
+		return nil, err
+	}
 
 	g.outputMode = mode
 	termbox.SetOutputMode(termbox.OutputMode(mode))
@@ -106,8 +116,6 @@ func NewGui(mode OutputMode, supportOverlaps bool) (*Gui, error) {
 
 	g.tbEvents = make(chan termbox.Event, 20)
 	g.userEvents = make(chan userEvent, 20)
-
-	g.maxX, g.maxY = termbox.Size()
 
 	g.BgColor, g.FgColor = ColorDefault, ColorDefault
 	g.SelBgColor, g.SelFgColor = ColorDefault, ColorDefault
@@ -122,9 +130,7 @@ func NewGui(mode OutputMode, supportOverlaps bool) (*Gui, error) {
 // Close finalizes the library. It should be called after a successful
 // initialization and when gocui is not needed anymore.
 func (g *Gui) Close() {
-	go func() {
-		g.stop <- struct{}{}
-	}()
+	close(g.stop)
 	termbox.Close()
 }
 
@@ -138,7 +144,8 @@ func (g *Gui) Size() (x, y int) {
 // the given colors.
 func (g *Gui) SetRune(x, y int, ch rune, fgColor, bgColor Attribute) error {
 	if x < 0 || y < 0 || x >= g.maxX || y >= g.maxY {
-		return errors.New("invalid point")
+		// swallowing error because it's not that big of a deal
+		return nil
 	}
 	termbox.SetCell(x, y, ch, termbox.Attribute(fgColor), termbox.Attribute(bgColor))
 	return nil
@@ -160,9 +167,6 @@ func (g *Gui) Rune(x, y int) (rune, error) {
 // ErrUnknownView is returned, which allows to assert if the View must
 // be initialized. It checks if the position is valid.
 func (g *Gui) SetView(name string, x0, y0, x1, y1 int, overlaps byte) (*View, error) {
-	if x0 >= x1 {
-		return nil, errors.New("invalid dimensions")
-	}
 	if name == "" {
 		return nil, errors.New("invalid name")
 	}
@@ -294,14 +298,14 @@ func (g *Gui) CurrentView() *View {
 // SetKeybinding creates a new keybinding. If viewname equals to ""
 // (empty string) then the keybinding will apply to all views. key must
 // be a rune or a Key.
-func (g *Gui) SetKeybinding(viewname string, key interface{}, mod Modifier, handler func(*Gui, *View) error) error {
+func (g *Gui) SetKeybinding(viewname string, contexts []string, key interface{}, mod Modifier, handler func(*Gui, *View) error) error {
 	var kb *keybinding
 
 	k, ch, err := getKey(key)
 	if err != nil {
 		return err
 	}
-	kb = newKeybinding(viewname, k, ch, mod, handler)
+	kb = newKeybinding(viewname, contexts, k, ch, mod, handler)
 	g.keybindings = append(g.keybindings, kb)
 	return nil
 }
@@ -408,7 +412,6 @@ func (g *Gui) SetManagerFunc(manager func(*Gui) error) {
 // MainLoop runs the main loop until an error is returned. A successful
 // finish should return ErrQuit.
 func (g *Gui) MainLoop() error {
-	g.loaderTick()
 	if err := g.flush(); err != nil {
 		return err
 	}
@@ -834,14 +837,25 @@ func (g *Gui) execKeybinding(v *View, kb *keybinding) (bool, error) {
 	return true, nil
 }
 
-func (g *Gui) loaderTick() {
+func (g *Gui) StartTicking() {
 	go func() {
-		for range time.Tick(time.Millisecond * 50) {
-			for _, view := range g.Views() {
-				if view.HasLoader {
-					g.userEvents <- userEvent{func(g *Gui) error { return nil }}
-					break
+		g.tickingMutex.Lock()
+		defer g.tickingMutex.Unlock()
+		ticker := time.NewTicker(time.Millisecond * 50)
+		defer ticker.Stop()
+	outer:
+		for {
+			select {
+			case <-ticker.C:
+				for _, view := range g.Views() {
+					if view.HasLoader {
+						g.userEvents <- userEvent{func(g *Gui) error { return nil }}
+						continue outer
+					}
 				}
+				return
+			case <-g.stop:
+				return
 			}
 		}
 	}()
